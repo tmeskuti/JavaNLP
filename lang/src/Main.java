@@ -4,7 +4,7 @@ public class Main {
     public static void main(String[] args) {
         System.out.println("Working Directory = " + System.getProperty("user.dir"));
         // Get the folder path as a CLI argument
-        String path = args[0];
+        // String path = args[0];
 
 //        LanguageModel model = new LanguageModel();
 //        model.addLanguage("english", path+"/lang-en");
