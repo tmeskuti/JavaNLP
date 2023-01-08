@@ -1,108 +1,103 @@
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Files;
+import static java.util.stream.Collectors.*;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 public class LanguageModel {
-    private ConcurrentMap<String, Map<String, Integer>> languageModels;
+    private final ConcurrentMap<String, String> languageModels;
 
     public LanguageModel() {
         languageModels = new ConcurrentHashMap<>();
     }
-
+    // Trains a model on the language specified as a parameter, using the provided language folder
     public void addLanguage(String language, String folderPath) {
-        File[] files = new File(folderPath).listFiles();
-        if (files == null) {
-            throw new IllegalArgumentException("No files found in " + folderPath);
-        }
 
-        ExecutorService executor = Executors.newFixedThreadPool(8); // create a thread pool with 8 threads
         List<Future<List<String>>> futures = new ArrayList<>();
+        ExecutorService executor = Executors.newFixedThreadPool(4);
 
-        for (File file : files) {
-            if (file.isDirectory()) {
-                // submit a task to read the .txt files in the language subfolder concurrently
-                futures.add(executor.submit(() -> {
-                    File[] subfolderFiles = file.listFiles();
-                    if (subfolderFiles == null) {
-                        return Collections.emptyList();
-                    }
-                    return Arrays.stream(subfolderFiles)
-                            .filter(subfolderFile -> subfolderFile.getName().endsWith(".txt"))
-                            .flatMap(subfolderFile -> {
-                                try {
-                                    return Files.lines(subfolderFile.toPath());
-                                } catch (IOException e) {
-                                    // handle the exception
-                                    return Stream.empty();
-                                }
-                            })
-                            .collect(Collectors.toList());
-                }));
-            }
+        // Walk the files in the folder
+        try (Stream<Path> paths = Files.walk(Paths.get(folderPath))) {
+            paths
+                    .filter(Files::isRegularFile)
+                    .forEach(file -> futures.add(executor.submit(() -> Files.lines(file).collect(toList()))));
+        } catch (IOException e) {
+            System.out.println("No files found!");
         }
 
-        // wait for all tasks to complete and collect the results
-        List<String> text = (List<String>) (List<String>) futures.stream()
-                .map(future -> {
+        // wait for all threads to complete and collect the results
+        String text = futures.stream().map(future -> {
                     try {
-                        return future.get();
+                        return future.get().stream().map(string -> string.replaceAll("[.,!?]*", "")).collect(joining());
                     } catch (InterruptedException | ExecutionException e) {
                         // handle the exception
                         return Collections.emptyList();
                     }
                 })
-                .flatMap(List::stream)
-                .collect(Collectors.toList());
+                .collect(toList()).toString();
 
-        // Construct n-gram model for the given language
-        Map<String, Integer> model = new HashMap<>();
-        IntStream.range(0, text.size() - 2)
-                .forEach(i -> {
-                    String nGram = text.get(i) + " " + text.get(i + 1) + " " + text.get(i + 2);
-                    model.put(nGram, model.getOrDefault(nGram, 0) + 1);
-                });
-
-        // Add the model to the languageModels map
-        languageModels.put(language, model);
+        languageModels.put(language, text);
+        executor.shutdown();
+    }
+    
+    public Map<String, Integer> getNgrams(String text, int n) {
+        return IntStream.range(0, text.length() - n + 1)
+                .mapToObj(i -> text.substring(i, i + n))
+                .collect(toMap(nGram -> nGram, nGram -> 1, Integer::sum));
     }
 
+    // The function below uses cosine similarity to calculate the language closest to the mystery file
+    public void calculateDocumentDistance(String mysteryText, Map<String, String> languageModels, int n) {
+        Map<String, Integer> mysteryNgrams = getNgrams(mysteryText, n);
+        Map<String, Map<String, Integer>> langNgram = new HashMap<>();
+        Map<String, Double> langSimilarity = new HashMap<>();
 
+        languageModels.entrySet()
+                .forEach(languageSet -> langNgram.put(languageSet.getKey(), getNgrams(String.valueOf(languageSet), n)));
 
+        langNgram.keySet()
+                .forEach(stringIntegerMap -> {
+                    double firstVector, secondVector = 0, dotProduct = 0;
 
-    public String classifyText(String folderPath) {
+                    firstVector = mysteryNgrams.values().stream().mapToDouble(count -> count * count).sum();
+                    firstVector = Math.sqrt(firstVector);
+
+                    secondVector = mysteryNgrams.values().stream().mapToDouble(count -> count * count).sum();
+                    secondVector = Math.sqrt(secondVector);
+
+                    dotProduct = mysteryNgrams.keySet().stream()
+                            .mapToDouble(nGram -> mysteryNgrams
+                                    .get(nGram) * langNgram
+                                    .get(stringIntegerMap)
+                                    .getOrDefault(nGram, 0)).sum();
+
+                    langSimilarity.put(stringIntegerMap, dotProduct / (firstVector * secondVector));
+                });
+
+        String mostSimilarLanguage = langSimilarity.entrySet().stream().max((entry1, entry2) -> entry1.getValue() > entry2.getValue() ? 1 : -1).get().getKey();
+
+        System.out.println(mostSimilarLanguage);
+    }
+
+    // This function streams the content of the mystery.txt file and passes it as a parameter to the function that does the comparing
+    public void classifyText(String folderPath) {
         File mysteryFile = new File(folderPath, "mystery.txt");
         if (!mysteryFile.exists()) {
             throw new IllegalArgumentException("mystery.txt not found in " + folderPath);
         }
 
-        List<String> mysteryText = null;
+        String mysteryText = null;
         try {
-            mysteryText = Files.lines(mysteryFile.toPath())
-                    .collect(Collectors.toList());
+            mysteryText = Files.lines(mysteryFile.toPath()).collect(toList()).stream().map(string -> string.replaceAll("[.,!?]*", "")).collect(joining());
         } catch (IOException e) {
-            // handle the exception
+            System.out.println("Empty");
         }
 
-        List<String> finalMysteryText = mysteryText;
-        return languageModels.entrySet().stream()
-                .max((entry1, entry2) -> computeSimilarity(entry1.getValue(), finalMysteryText) - computeSimilarity(entry2.getValue(), finalMysteryText))
-                .map(Map.Entry::getKey)
-                .orElse("Unknown");
-    }
-
-
-    private int computeSimilarity(Map<String, Integer> model, List<String> text) {
-        return (int) IntStream.range(0, text.size() - 2)
-                .mapToObj(i -> text.get(i) + " " + text.get(i + 1) + " " + text.get(i + 2))
-                .filter(model::containsKey)
-                .count();
+        calculateDocumentDistance(mysteryText, languageModels, 3);
     }
 }

@@ -1,19 +1,16 @@
-import java.io.File;
 
 public class Main {
     public static void main(String[] args) {
-       // String path = System.getProperty("user.dir");
-
+        // Get the folder path as a CL argument
         String folderPath = args[0];
-       // String fullPath = path+folderName;
 
+        // Create and train the NLP model
         LanguageModel model = new LanguageModel();
-        model.addLanguage("english", folderPath+"/lang-en");
-        model.addLanguage("french", folderPath+"/lang-fr");
-        model.addLanguage("spanish", folderPath+"/lang-es");
+        model.addLanguage("English", folderPath+"/lang-en");
+        model.addLanguage("French", folderPath+"/lang-fr");
+        model.addLanguage("Spanish", folderPath+"/lang-es");
 
-
-
-        System.out.println(model.classifyText(folderPath));
+        // Classify the mystery file
+        model.classifyText(folderPath);
     }
 }
